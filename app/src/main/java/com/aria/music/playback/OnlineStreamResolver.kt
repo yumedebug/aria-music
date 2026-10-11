@@ -1,6 +1,7 @@
 package com.aria.music.playback
 
 import android.net.Uri
+import android.util.Log
 import com.zionhuang.innertube.NewPipeUtils
 import com.zionhuang.innertube.YouTube
 import com.zionhuang.innertube.YouTubeClient
@@ -18,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap
 object OnlineStreamResolver {
 
     private const val SCHEME = "ytmusic"
+    private const val TAG = "OnlineStreamResolver"
 
     private val cache = ConcurrentHashMap<String, String>()
 
@@ -42,12 +44,28 @@ object OnlineStreamResolver {
 
     private suspend fun resolveStream(videoId: String): String? {
         for (client in clients) {
-            val player = YouTube.player(videoId, client).getOrNull() ?: continue
-            if (player.playabilityStatus != "OK") continue
-            val format = player.formats.maxByOrNull { it.bitrate } ?: continue
-            val url = NewPipeUtils.getStreamUrl(videoId, format).getOrNull() ?: continue
-            return url
+            val result = YouTube.player(videoId, client)
+            val player = result.getOrNull()
+            if (player == null) {
+                Log.w(TAG, "player($client) threw for $videoId: ${result.exceptionOrNull()?.message}")
+                continue
+            }
+            if (player.playabilityStatus != "OK") {
+                Log.w(TAG, "player($client) not playable for $videoId: " +
+                    "${player.playabilityStatus} ${player.playabilityReason.orEmpty()}")
+                continue
+            }
+            // 帯域の高い順に試す。1本でも再生できればそれを採用する。
+            for (format in player.formats.sortedByDescending { it.bitrate }) {
+                val url = NewPipeUtils.getStreamUrl(videoId, format).getOrNull()
+                if (url != null) {
+                    Log.i(TAG, "resolved $videoId with $client itag=${format.itag}")
+                    return url
+                }
+            }
+            Log.w(TAG, "player($client) returned no usable stream for $videoId")
         }
+        Log.e(TAG, "Could not resolve a stream for video $videoId with clients=$clients")
         return null
     }
 }

@@ -19,6 +19,7 @@ import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -33,7 +34,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -42,9 +45,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.aria.music.data.online.OnlineCollection
+import com.aria.music.data.online.OnlineCollectionKind
+import com.aria.music.data.online.OnlineCollectionNav
 import com.aria.music.data.repo.AppSettings
 import com.aria.music.ui.components.MiniPlayer
 import com.aria.music.ui.detail.AlbumDetailScreen
+import com.aria.music.ui.detail.OnlineCollectionDetailScreen
 import com.aria.music.ui.detail.PlaylistDetailScreen
 import com.aria.music.ui.home.HomeScreen
 import com.aria.music.ui.library.LibraryScreen
@@ -72,7 +79,7 @@ fun AriaRoot() {
         .collectAsStateWithLifecycle(initialValue = AppSettings())
     val playbackState by container.playback.state.collectAsStateWithLifecycle()
     val artworkAccent = rememberArtworkAccent(playbackState.current)
-    val accent = artworkAccent ?: BrandAccent
+    val accent = if (settings.artworkColors) (artworkAccent ?: BrandAccent) else BrandAccent
 
     // Media library permission, then a first scan so Home has data immediately.
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -127,6 +134,10 @@ private fun AppScaffold(accent: androidx.compose.ui.graphics.Color) {
                     )
                 }
                 if (isTopLevel) {
+                    HorizontalDivider(
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                    )
                     NavigationBar(containerColor = MaterialTheme.colorScheme.background) {
                         tabs.forEach { tab ->
                             val selected = currentRoute == tab.route
@@ -146,7 +157,7 @@ private fun AppScaffold(accent: androidx.compose.ui.graphics.Color) {
                                 colors = NavigationBarItemDefaults.colors(
                                     selectedIconColor = accent,
                                     selectedTextColor = accent,
-                                    indicatorColor = accent.copy(alpha = 0.15f),
+                                    indicatorColor = Color.Transparent,
                                     unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                     unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                 ),
@@ -200,6 +211,12 @@ private fun AriaNavHost(
             HomeScreen(
                 onOpenAlbum = { navController.navigate("album/${it.id}") },
                 onOpenPlaylist = { navController.navigate("playlist/$it") },
+                onOpenCollection = { collection ->
+                    // タイトルやサムネイルを route に載せず ID だけ運び、中身は
+                    // OnlineCollectionNav で受け渡す。
+                    OnlineCollectionNav.passTo(collection)
+                    navController.navigate("online/${collection.kind}/${collection.id}")
+                },
                 onOpenSearch = { navController.navigate("search") },
                 contentPadding = contentPadding,
             )
@@ -253,6 +270,32 @@ private fun AriaNavHost(
                     container.playback.playTracks(it.shuffled(), 0)
                     onOpenPlayer()
                 },
+                contentPadding = contentPadding,
+            )
+        }
+        composable(
+            route = "online/{collectionKind}/{collectionId}",
+            arguments = listOf(
+                navArgument("collectionKind") { type = NavType.StringType },
+                navArgument("collectionId") { type = NavType.StringType },
+            ),
+        ) { entry ->
+            val kind = entry.arguments?.getString("collectionKind").orEmpty()
+            val id = entry.arguments?.getString("collectionId").orEmpty()
+            // 画面回転などで戻って来た時も同じ中身が見られるよう、保持している分が
+            // 無ければ種別と ID だけで復元する。
+            val collection = OnlineCollectionNav.current()?.takeIf { it.id == id }
+                ?: OnlineCollection(
+                    kind = OnlineCollectionKind.entries.firstOrNull { it.name == kind }
+                        ?: OnlineCollectionKind.ALBUM,
+                    id = id,
+                    title = "",
+                    subtitle = "",
+                    thumbnail = null,
+                )
+            OnlineCollectionDetailScreen(
+                collection = collection,
+                onBack = { navController.popBackStack() },
                 contentPadding = contentPadding,
             )
         }

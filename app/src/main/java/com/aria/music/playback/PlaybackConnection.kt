@@ -208,7 +208,10 @@ class PlaybackConnection(
 
     private fun startPolling() {
         pollJob?.cancel()
-        pollJob = scope.launch {
+        // MediaController のメソッドは生成元スレッド（この場合はメイン）からしか
+        // 呼べない。バックグラウンドで触ると IllegalStateException で即クラッシュ
+        // するため、ポーリング自体を必ずメインスレッドで回す。
+        pollJob = scope.launch(Dispatchers.Main) {
             while (isActive) {
                 controller?.let { media ->
                     if (media.isPlaying || media.playbackState == Player.STATE_BUFFERING) {

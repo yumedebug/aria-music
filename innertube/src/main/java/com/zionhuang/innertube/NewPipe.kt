@@ -76,20 +76,39 @@ object NewPipeUtils {
         YoutubeJavaScriptPlayerManager.getSignatureTimestamp(videoId)
     }
 
-    /** 署名で保護された [format] を、直接再生できるURLに変換する。 */
+    /**
+     * [format] を、そのまま再生できるURLへ変換する。
+     *
+     * ANDROID_VR など一部のクライアントは署名も `n` スロットリングパラメータも
+     * 持たない生URLを返す。生URLが既に再生できるなら player JS を実行する必要は
+     * 無く、実行を強制すると JS プレイヤーの取得・実行に失敗した時点で例外が
+     * 起きて本来再生できたURLまで破棄されてしまう。そのため `n` が付いている
+     * 場合にのみ JS を使い、失敗時は生URLへフォールバックする。
+     */
     fun getStreamUrl(videoId: String, format: StreamFormat): Result<String> = runCatching {
         ensureInitialized()
-        val url = format.url ?: format.signatureCipher?.let { cipher ->
+        val raw = format.url ?: format.signatureCipher?.let { cipher ->
             val params = parseQueryString(cipher)
             val obfuscated = params["s"] ?: error("Could not parse cipher signature")
             val signatureParam = params["sp"] ?: "signature"
-            val raw = params["url"] ?: error("Could not parse cipher url")
-            val builder = URLBuilder(raw)
+            val plain = params["url"] ?: error("Could not parse cipher url")
+            val builder = URLBuilder(plain)
             builder.parameters[signatureParam] =
                 YoutubeJavaScriptPlayerManager.deobfuscateSignature(videoId, obfuscated)
             builder.buildString()
         } ?: error("Could not find format url")
 
-        YoutubeJavaScriptPlayerManager.getUrlWithThrottlingParameterDeobfuscated(videoId, url)
+        if (!hasThrottlingParameter(raw)) return@runCatching raw
+
+        runCatching {
+            YoutubeJavaScriptPlayerManager.getUrlWithThrottlingParameterDeobfuscated(videoId, raw)
+        }.getOrElse { raw }
+    }
+
+    /** [url] に `n` スロットリングパラメータが付いているか。 */
+    private fun hasThrottlingParameter(url: String): Boolean {
+        val query = url.substringAfter('?', missingDelimiterValue = "")
+        if (query.isEmpty()) return false
+        return query.split('&').any { it.startsWith("n=") && it.length > 2 }
     }
 }

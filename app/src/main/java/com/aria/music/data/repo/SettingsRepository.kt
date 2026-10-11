@@ -18,12 +18,12 @@ enum class ThemeMode { SYSTEM, LIGHT, DARK;
 
 data class AppSettings(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    /** Follow Android 12+ Material You wallpaper colours. */
-    val dynamicColor: Boolean = true,
+    /** Follow Android 12+ Material You wallpaper colours. Off by default: Apple Music look. */
+    val dynamicColor: Boolean = false,
     /** Pure-black surfaces for AMOLED panels. */
     val amoled: Boolean = false,
     /** Tint the player chrome with colours pulled from the album artwork. */
-    val artworkColors: Boolean = true,
+    val artworkColors: Boolean = false,
 )
 
 private val Context.settingsDataStore by preferencesDataStore(name = "aria_settings")
@@ -41,9 +41,9 @@ class SettingsRepository(private val context: Context) {
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
         AppSettings(
             themeMode = ThemeMode.from(prefs[Keys.themeMode]),
-            dynamicColor = prefs[Keys.dynamicColor] ?: true,
+            dynamicColor = prefs[Keys.dynamicColor] ?: false,
             amoled = prefs[Keys.amoled] ?: false,
-            artworkColors = prefs[Keys.artworkColors] ?: true,
+            artworkColors = prefs[Keys.artworkColors] ?: false,
         )
     }
 

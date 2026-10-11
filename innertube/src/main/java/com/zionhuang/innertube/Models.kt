@@ -56,6 +56,20 @@ data class AlbumPage(val album: AlbumItem, val songs: List<SongItem>)
 
 data class PlaylistPage(val playlist: PlaylistItem, val songs: List<SongItem>)
 
+/** YouTube Music のホーム（おすすめ）1棚分。曲棚とアルバム等の棚が混在しうる。 */
+data class HomeSection(
+    val title: String,
+    val albums: List<AlbumItem> = emptyList(),
+    val playlists: List<PlaylistItem> = emptyList(),
+    val artists: List<ArtistItem> = emptyList(),
+    val songs: List<SongItem> = emptyList(),
+) {
+    val isEmpty: Boolean
+        get() = albums.isEmpty() && playlists.isEmpty() && artists.isEmpty() && songs.isEmpty()
+}
+
+data class HomePage(val sections: List<HomeSection>)
+
 /** `player` レスポンスから取り出した音声のみのフォーマット1つ。 */
 data class StreamFormat(
     val itag: Int,
@@ -144,6 +158,21 @@ internal fun parseDuration(text: String?): Int? {
 /** `thumbnail.musicThumbnailRenderer.thumbnail.thumbnails` から最良のサムネイルURLを選ぶ。 */
 internal fun JsonObject.thumbnailUrl(): String? {
     val thumbnails = obj("thumbnail")
+        ?.obj("musicThumbnailRenderer")
+        ?.obj("thumbnail")
+        ?.array("thumbnails")
+        .orEmpty()
+    return thumbnails.lastOrNull()
+        ?.let { it as? JsonObject }
+        ?.string("url")
+}
+
+/**
+ * `musicTwoRowItemRenderer`（ホームの横スクロールカード）用のサムネイル。
+ * こちらは `thumbnailRenderer.musicThumbnailRenderer...` に入っている。
+ */
+internal fun JsonObject.twoRowThumbnailUrl(): String? {
+    val thumbnails = (obj("thumbnailRenderer") ?: obj("thumbnail"))
         ?.obj("musicThumbnailRenderer")
         ?.obj("thumbnail")
         ?.array("thumbnails")

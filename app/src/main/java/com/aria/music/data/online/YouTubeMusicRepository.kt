@@ -27,6 +27,16 @@ data class OnlineSearch(
 )
 
 /**
+ * ホーム（おすすめ）の1棚。[tracks] は曲棚、[collections] はアルバム / プレイリスト /
+ * アーティストの棚。両方が入ることは通常ないが、UI はどちらでも描画できる。
+ */
+data class OnlineShelf(
+    val title: String,
+    val tracks: List<Track> = emptyList(),
+    val collections: List<OnlineCollection> = emptyList(),
+)
+
+/**
  * `:innertube` モジュールの薄い窓口。YouTube Music の結果を既存の [Track] に
  * マッピングするので、現在の UI と再生パイプラインは変更不要。オンライン曲は
  * `ytmusic:<videoId>` という URI を持つだけで、再生時に
@@ -62,6 +72,26 @@ class YouTubeMusicRepository {
     suspend fun artistTracks(browseId: String): List<Track> =
         YouTube.artistSongs(browseId).getOrNull().orEmpty().map(::toTrack)
 
+    /** ホーム（おすすめ）の棚。曲棚とアルバム等の棚をまとめて返す。 */
+    suspend fun home(): List<OnlineShelf> {
+        val page = YouTube.home().getOrNull() ?: return emptyList()
+        return page.sections.mapNotNull { section ->
+            val collections = buildList {
+                section.albums.forEach {
+                    add(OnlineCollection(OnlineCollectionKind.ALBUM, it.playlistId, it.title, it.artist.orEmpty(), it.thumbnail))
+                }
+                section.playlists.forEach {
+                    add(OnlineCollection(OnlineCollectionKind.PLAYLIST, it.id, it.title, it.author.orEmpty(), it.thumbnail))
+                }
+                section.artists.forEach {
+                    add(OnlineCollection(OnlineCollectionKind.ARTIST, it.id, it.title, "", it.thumbnail))
+                }
+            }
+            val shelf = OnlineShelf(section.title, section.songs.map(::toTrack), collections)
+            if (shelf.tracks.isEmpty() && shelf.collections.isEmpty()) null else shelf
+        }
+    }
+
     /** まとまりの中身を解決する（まとまりをタップした時に再生する曲一覧）。 */
     suspend fun tracksOf(collection: OnlineCollection): List<Track> = when (collection.kind) {
         OnlineCollectionKind.ALBUM -> albumTracks(collection.id)
@@ -87,3 +117,22 @@ fun OnlineCollection.asTrack(): Track = Track.online(
     album = kind.label,
     thumbnailUrl = thumbnail,
 )
+
+/**
+ * ホームでタップした [OnlineCollection] を詳細画面へ受け渡すための一時保持。
+ * Navigation の route へタイトルやサムネイルを載せると文字化けや長さ制限に
+ * 縛られるため、ID だけを route に載せて中身はここで渡す。詳細画面が
+ * [com.aria.music.ui.detail.OnlineCollectionDetailScreen] で読み終わった時点で
+ * [current] から読み、画面回転でも同じ中身を保てる。
+ */
+object OnlineCollectionNav {
+    var current: OnlineCollection? = null
+        private set
+
+    fun passTo(collection: OnlineCollection) {
+        current = collection
+    }
+
+    /** 直前に [passTo] されたまとまり。無ければ null。 */
+    fun current(): OnlineCollection? = current
+}

@@ -49,9 +49,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
@@ -248,6 +250,21 @@ private fun PlayerPage(
             .fillMaxSize()
             .padding(top = statusBarPadding),
     ) {
+        // Apple Music-style grabber.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp, bottom = 2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(36.dp)
+                    .height(5.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f)),
+            )
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -294,13 +311,15 @@ private fun PlayerPage(
                 label = "artworkSize",
             )
             val corner by animateDpAsState(
-                targetValue = if (grown) 14.dp else 8.dp,
+                targetValue = if (grown) 12.dp else 8.dp,
                 animationSpec = tween(420),
                 label = "artworkCorner",
             )
             ArtworkImage(
                 bitmap = rememberArtwork(track),
-                modifier = Modifier.size(artworkSize),
+                modifier = Modifier
+                    .size(artworkSize)
+                    .shadow(20.dp, RoundedCornerShape(corner), clip = false),
                 cornerRadius = corner,
                 iconSize = 64.dp,
             )

@@ -181,7 +181,7 @@ fun TransportControls(
             Icon(
                 imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                 contentDescription = if (isPlaying) "Pause" else "Play",
-                tint = accent,
+                tint = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.size(playButtonSize - 8.dp),
             )
         }

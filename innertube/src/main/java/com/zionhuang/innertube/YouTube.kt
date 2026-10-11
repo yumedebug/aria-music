@@ -87,6 +87,15 @@ object YouTube {
         root.collectObjects("musicResponsiveListItemRenderer").mapNotNull(::parseSongItem)
     }
 
+    /**
+     * YouTube Music のホーム（おすすめ）。`FEmusic_home` を browse し、各
+     * `musicCarouselShelfRenderer` を1つの棚として解析する。検索と同じ
+     * クライアント（WEB_REMIX）でログインなしでも返る。
+     */
+    suspend fun home(): Result<HomePage> = runCatching {
+        parseHome(innerTube.browse(YouTubeClient.WEB_REMIX, browseId = "FEmusic_home"))
+    }
+
     // ---- プレイヤー -----------------------------------------------------------
 
     /**
@@ -152,6 +161,70 @@ object YouTube {
             )
             browseId.startsWith("VL") -> ParsedItem.Playlist(
                 PlaylistItem(browseId.removePrefix("VL"), title, columns.getOrNull(1), thumbnail),
+            )
+            browseId.startsWith("UC") -> ParsedItem.Artist(ArtistItem(browseId, title, thumbnail))
+            else -> null
+        }
+    }
+
+    private fun parseHome(root: JsonElement): HomePage {
+        val sections = mutableListOf<HomeSection>()
+        root.collectObjects("musicCarouselShelfRenderer").forEach { carousel ->
+            val title = carousel.obj("header")
+                ?.obj("musicCarouselShelfBasicHeaderRenderer")
+                ?.obj("title")
+                ?.runsText()
+                ?: return@forEach
+            val albums = mutableListOf<AlbumItem>()
+            val playlists = mutableListOf<PlaylistItem>()
+            val artists = mutableListOf<ArtistItem>()
+            val songs = mutableListOf<SongItem>()
+            carousel.collectObjects("musicTwoRowItemRenderer").forEach { item ->
+                when (val parsed = classifyTwoRow(item)) {
+                    is ParsedItem.Album -> albums.addIfNew(parsed.item) { it.browseId }
+                    is ParsedItem.Playlist -> playlists.addIfNew(parsed.item) { it.id }
+                    is ParsedItem.Artist -> artists.addIfNew(parsed.item) { it.id }
+                    is ParsedItem.Song -> songs.addIfNew(parsed.item) { it.videoId }
+                    null -> Unit
+                }
+            }
+            carousel.collectObjects("musicResponsiveListItemRenderer").forEach { item ->
+                parseSongItem(item)?.let { songs.addIfNew(it) { song -> song.videoId } }
+            }
+            val section = HomeSection(title, albums, playlists, artists, songs)
+            if (!section.isEmpty) sections.add(section)
+        }
+        return HomePage(sections)
+    }
+
+    /** ホームの横スクロールカード（`musicTwoRowItemRenderer`）を分類する。 */
+    private fun classifyTwoRow(renderer: JsonObject): ParsedItem? {
+        val title = renderer.obj("title")?.runsText() ?: return null
+        val nav = renderer.obj("navigationEndpoint")
+        val subtitle = renderer.obj("subtitle")?.runsText()
+        val thumbnail = renderer.twoRowThumbnailUrl()
+        val videoId = nav?.obj("watchEndpoint")?.string("videoId")
+        if (videoId != null) {
+            return ParsedItem.Song(
+                SongItem(
+                    videoId = videoId,
+                    title = title,
+                    artists = subtitle?.takeIf { it.isNotBlank() }
+                        ?.let { listOf(Artist(null, it)) }
+                        .orEmpty(),
+                    album = null,
+                    durationSeconds = null,
+                    thumbnail = thumbnail,
+                ),
+            )
+        }
+        val browseId = nav?.obj("browseEndpoint")?.string("browseId") ?: return null
+        return when {
+            browseId.startsWith("MPRE") -> ParsedItem.Album(
+                AlbumItem(browseId, browseId.removePrefix("MPRE"), title, subtitle, thumbnail),
+            )
+            browseId.startsWith("VL") -> ParsedItem.Playlist(
+                PlaylistItem(browseId.removePrefix("VL"), title, subtitle, thumbnail),
             )
             browseId.startsWith("UC") -> ParsedItem.Artist(ArtistItem(browseId, title, thumbnail))
             else -> null
