@@ -1,0 +1,157 @@
+name: Android Release
+
+# 署名済み release APK をビルドし、GitHub Releases に公開する:
+#   - `v*` タグを push        -> バージョン付きリリース（例: Aria Music 1.0.0）
+#   - `main` に push          -> ローリングな `main-latest` プレリリース。
+#                                main の先頭が常にインストール可能になる
+#   - 手動実行(workflow_dispatch) -> タグ入力があれば版付き、無ければ
+#                                `main-latest` のローリングビルド
+#
+# 署名には KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD の
+# リポジトリ Secrets を使う。未設定の場合は debug 鍵で署名する
+# （インストールは可能だが、本番配布向けではない）。
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ "v*" ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "公開するリリースタグ（空なら main-latest のローリングビルド）"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+    - name: コードをチェックアウト
+      uses: actions/checkout@v4
+
+    - name: JDK 17 をセットアップ
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+
+    - name: Gradle をセットアップ
+      uses: gradle/actions/setup-gradle@v4
+
+    # コミットされた local.properties がマシン固有の SDK パスを指さないようにする。
+    # AGP には runner の ANDROID_HOME を使わせる。
+    - name: runner の Android SDK を使用
+      run: rm -f local.properties
+
+    - name: release APK をビルド
+      env:
+        KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      run: |
+        set -o pipefail
+        if [ -n "$KEYSTORE_BASE64" ]; then
+          if echo "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > "$RUNNER_TEMP/release.keystore" 2>"$RUNNER_TEMP/keystore-decode.err"; then
+            export KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
+            echo "Secrets の release キーストアで署名します。"
+          else
+            echo "::error::KEYSTORE_BASE64 は設定されていますが有効な base64 ではありません: $(cat "$RUNNER_TEMP/keystore-decode.err")"
+            exit 1
+          fi
+        else
+          echo "::warning::KEYSTORE_BASE64 が未設定です。APK は debug 署名にフォールバックします。"
+        fi
+        chmod +x ./gradlew
+        ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build-session.log
+
+    - name: APK に名前を付与
+      id: apk
+      run: |
+        APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
+        if [ -z "$APK" ]; then
+          echo "::error::app/build/outputs/apk/release に release APK が見つかりません"
+          exit 1
+        fi
+        VERSION=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts | head -n 1)
+        SHORT_SHA="${GITHUB_SHA::7}"
+        NAME="AriaMusic-${VERSION}-${SHORT_SHA}.apk"
+        cp "$APK" "$NAME"
+        echo "file=$NAME" >> "$GITHUB_OUTPUT"
+
+    - name: リリース情報を決定
+      id: meta
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag }}" ]; then
+          TAG="${{ github.event.inputs.tag }}"
+        elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+          TAG="${GITHUB_REF#refs/tags/}"
+        else
+          TAG="main-latest"
+        fi
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+        if [ "$TAG" = "main-latest" ]; then
+          echo "name=Aria Music — main 最新ビルド" >> "$GITHUB_OUTPUT"
+          echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          echo "make_latest=false" >> "$GITHUB_OUTPUT"
+        else
+          VERSION="${TAG#v}"
+          echo "name=Aria Music $VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          echo "make_latest=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: 以前のローリングリリースを削除
+      if: steps.meta.outputs.tag == 'main-latest'
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: gh release delete main-latest --yes --cleanup-tag 2>/dev/null || true
+
+    - name: GitHub Release を公開
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.meta.outputs.tag }}
+        name: ${{ steps.meta.outputs.name }}
+        target_commitish: ${{ github.sha }}
+        prerelease: ${{ steps.meta.outputs.prerelease }}
+        make_latest: ${{ steps.meta.outputs.make_latest }}
+        generate_release_notes: false
+        fail_on_unmatched_files: true
+        files: ${{ steps.apk.outputs.file }}
+        body: |
+          ## ${{ steps.meta.outputs.name }}
+
+          Android Release ワークフローがコミット `${{ github.sha }}` からビルドしました。
+
+          ### インストール
+          下の APK をダウンロードし、端末にインストールしてください。
+          「提供元不明のアプリ」の許可が必要な場合があります。
+        draft: false
+
+    - name: APK を artifact にアップロード
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: aria-music-release-apk
+        path: ${{ steps.apk.outputs.file }}
+        if-no-files-found: ignore
+        retention-days: 30
+
+    - name: 失敗時のビルドログをアップロード
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: build-session-log
+        path: build-session.log
+        if-no-files-found: ignore
+        retention-days: 7

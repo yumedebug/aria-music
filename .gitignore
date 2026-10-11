@@ -1,0 +1,19 @@
+# Gradle / Android build outputs
+.gradle/
+build/
+*.iml
+.kotlin/
+
+# Machine-local SDK path — never commit this, CI sets its own ANDROID_HOME
+local.properties
+
+# APKs published as build artifacts instead
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# IDE / OS noise
+.idea/
+.DS_Store
+captures/
